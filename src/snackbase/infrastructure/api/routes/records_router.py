@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from snackbase.core.config import get_settings
@@ -683,36 +684,52 @@ async def list_records(
     target_account_id = await _resolve_account_id(current_user, request, session)
     repo_account_id = None if (current_user is not None and current_user.account_id == SYSTEM_ACCOUNT_ID) else target_account_id
 
-    if is_cursor_mode:
-        records, next_cursor, prev_cursor, has_more, total = await record_repo.find_all_cursor(
-            collection_name=collection,
-            account_id=repo_account_id,
-            schema=schema,
-            limit=limit,
+    try:
+        if is_cursor_mode:
+            records, next_cursor, prev_cursor, has_more, total = await record_repo.find_all_cursor(
+                collection_name=collection,
+                account_id=repo_account_id,
+                schema=schema,
+                limit=limit,
+                sort_by=sort_by,
+                descending=descending,
+                user_filter=user_filter,
+                rule_filter=rule_result,
+                cursor_sort_value=cursor_sort_value,
+                cursor_record_id=cursor_record_id,
+                is_backward=is_backward,
+                include_count=include_count,
+            )
+        else:
+            records, total = await record_repo.find_all(
+                collection_name=collection,
+                account_id=repo_account_id,
+                schema=schema,
+                skip=skip,
+                limit=limit,
+                sort_by=sort_by,
+                descending=descending,
+                user_filter=user_filter,
+                rule_filter=rule_result,
+            )
+            next_cursor = None
+            prev_cursor = None
+            has_more = False
+    except SQLAlchemyError as exc:
+        logger.error(
+            "Record list query failed",
+            collection=collection,
+            cursor_mode=is_cursor_mode,
             sort_by=sort_by,
             descending=descending,
-            user_filter=user_filter,
-            rule_filter=rule_result,
-            cursor_sort_value=cursor_sort_value,
-            cursor_record_id=cursor_record_id,
-            is_backward=is_backward,
-            include_count=include_count,
-        )
-    else:
-        records, total = await record_repo.find_all(
-            collection_name=collection,
-            account_id=repo_account_id,
-            schema=schema,
+            limit=limit,
             skip=skip,
-            limit=limit,
-            sort_by=sort_by,
-            descending=descending,
-            user_filter=user_filter,
-            rule_filter=rule_result,
+            has_filter=user_filter is not None,
+            include_count=include_count,
+            error_type=type(exc).__name__,
+            exc_info=True,
         )
-        next_cursor = None
-        prev_cursor = None
-        has_more = False
+        raise
 
     # 6. Apply field filtering based on permissions
     if allowed_fields != "*":
@@ -921,17 +938,30 @@ async def aggregate_collection(
 
     # 9. Run aggregation
     record_repo = RecordRepository(session)
-    results, total_groups = await record_repo.aggregate_records(
-        collection_name=collection,
-        account_id=repo_account_id,
-        agg_functions=agg_functions,
-        group_by_fields=group_by_fields,
-        user_filter=user_filter,
-        rule_filter=rule_result,
-        having_sql=having_sql,
-        having_params=having_params,
-        schema=schema,
-    )
+    try:
+        results, total_groups = await record_repo.aggregate_records(
+            collection_name=collection,
+            account_id=repo_account_id,
+            agg_functions=agg_functions,
+            group_by_fields=group_by_fields,
+            user_filter=user_filter,
+            rule_filter=rule_result,
+            having_sql=having_sql,
+            having_params=having_params,
+            schema=schema,
+        )
+    except SQLAlchemyError as exc:
+        logger.error(
+            "Record aggregate query failed",
+            collection=collection,
+            group_by_fields=group_by_fields,
+            has_filter=user_filter is not None,
+            has_having=having_sql is not None,
+            function_count=len(agg_functions),
+            error_type=type(exc).__name__,
+            exc_info=True,
+        )
+        raise
 
     return AggregationResponse(results=results, total_groups=total_groups)
 

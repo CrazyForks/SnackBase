@@ -52,17 +52,54 @@ async def setup_collection(client: AsyncClient, superadmin_token):
 
     # Seed test records
     records = [
-        {"name": "Alpha snack", "title": "Apple", "price": 1.5, "status": "active", "is_featured": True, "category": "fruit"},
-        {"name": "Beta snack", "title": "Banana", "price": 0.5, "status": "active", "is_featured": False, "category": "fruit"},
-        {"name": "Gamma root", "title": "Carrot", "price": 0.8, "status": "pending", "is_featured": False, "category": "vegetable"},
-        {"name": "Omega snack", "title": "Durian", "price": 20.0, "status": "archived", "is_featured": True, "category": "fruit"},
-        {"name": "Zeta vegetable", "title": "Eggplant", "price": 1.2, "status": "active", "is_featured": False, "category": "vegetable"},
+        {
+            "name": "Alpha snack",
+            "title": "Apple",
+            "price": 1.5,
+            "status": "active",
+            "is_featured": True,
+            "category": "fruit",
+        },
+        {
+            "name": "Beta snack",
+            "title": "Banana",
+            "price": 0.5,
+            "status": "active",
+            "is_featured": False,
+            "category": "fruit",
+        },
+        {
+            "name": "Gamma root",
+            "title": "Carrot",
+            "price": 0.8,
+            "status": "pending",
+            "is_featured": False,
+            "category": "vegetable",
+        },
+        {
+            "name": "Omega snack",
+            "title": "Durian",
+            "price": 20.0,
+            "status": "archived",
+            "is_featured": True,
+            "category": "fruit",
+        },
+        {
+            "name": "Zeta vegetable",
+            "title": "Eggplant",
+            "price": 1.2,
+            "status": "active",
+            "is_featured": False,
+            "category": "vegetable",
+        },
     ]
+    created_records = []
     for record in records:
         r = await client.post(f"/api/v1/records/{COLLECTION}", json=record, headers=headers)
         assert r.status_code == 201, f"Failed to seed record: {r.text}"
+        created_records.append(r.json())
 
-    yield
+    yield created_records
 
     # Cleanup: delete collection after test
     await client.delete(f"/api/v1/collections/{COLLECTION}", headers=headers)
@@ -163,7 +200,9 @@ async def test_filter_like(client: AsyncClient, superadmin_token):
 
 
 @pytest.mark.asyncio
-async def test_filter_name_field_collision_returns_filtered_items(client: AsyncClient, superadmin_token):
+async def test_filter_name_field_collision_returns_filtered_items(
+    client: AsyncClient, superadmin_token
+):
     """Filtering on a collection field named 'name' is qualified to the records alias."""
     headers = {"Authorization": f"Bearer {superadmin_token}"}
     resp = await client.get(
@@ -179,6 +218,48 @@ async def test_filter_name_field_collision_returns_filtered_items(client: AsyncC
         "Beta snack",
         "Omega snack",
     }
+
+
+@pytest.mark.asyncio
+async def test_filter_collision_matrix_supported_operators(
+    client: AsyncClient,
+    superadmin_token,
+    setup_collection,
+):
+    """Colliding user and system fields stay scoped to the records alias."""
+    headers = {"Authorization": f"Bearer {superadmin_token}"}
+    first_record = setup_collection[0]
+    first_id = first_record["id"]
+    second_id = setup_collection[1]["id"]
+
+    cases = [
+        ('name = "Alpha snack"', 1, {"Alpha snack"}),
+        ('name != "Alpha snack"', 4, {"Beta snack", "Gamma root", "Omega snack", "Zeta vegetable"}),
+        ('name ~ "%snack%"', 3, {"Alpha snack", "Beta snack", "Omega snack"}),
+        (f'id = "{first_id}"', 1, {"Alpha snack"}),
+        (f'id IN ("{first_id}", "{second_id}")', 2, {"Alpha snack", "Beta snack"}),
+        ("created_at IS NOT NULL", 5, None),
+        ("updated_at IS NOT NULL", 5, None),
+        ('created_at >= "2000-01-01T00:00:00+00:00"', 5, None),
+        ('updated_at <= "9999-12-31T23:59:59+00:00"', 5, None),
+        (
+            'name ~ "%snack%" && created_at IS NOT NULL',
+            3,
+            {"Alpha snack", "Beta snack", "Omega snack"},
+        ),
+    ]
+
+    for filter_expr, expected_total, expected_names in cases:
+        resp = await client.get(
+            f"/api/v1/records/{COLLECTION}",
+            params={"filter": filter_expr},
+            headers=headers,
+        )
+        assert resp.status_code == 200, f"{filter_expr} failed: {resp.text}"
+        data = resp.json()
+        assert data["total"] == expected_total
+        if expected_names is not None:
+            assert {item["name"] for item in data["items"]} == expected_names
 
 
 @pytest.mark.asyncio
@@ -413,7 +494,7 @@ async def test_filter_unknown_field_returns_400(client: AsyncClient, superadmin_
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert "error" in data
+    assert data["error"] == "Invalid filter expression"
     assert "nonexistent_field" in data["message"]
 
 
@@ -427,7 +508,8 @@ async def test_filter_context_variable_returns_400(client: AsyncClient, superadm
     )
     assert resp.status_code == 400
     data = resp.json()
-    assert "error" in data
+    assert data["error"] == "Invalid filter expression"
+    assert "@request.auth.id" in data["message"]
 
 
 @pytest.mark.asyncio
@@ -439,6 +521,7 @@ async def test_filter_malformed_syntax_returns_400(client: AsyncClient, superadm
         headers=headers,
     )
     assert resp.status_code == 400
+    assert resp.json()["error"] == "Invalid filter expression"
 
 
 @pytest.mark.asyncio

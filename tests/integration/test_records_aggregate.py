@@ -56,17 +56,54 @@ async def setup_collection(client: AsyncClient, superadmin_token):
 
     # Seed records
     records = [
-        {"name": "Alpha snack", "title": "A", "price": 10.0, "quantity": 5, "status": "active", "category": "fruit"},
-        {"name": "Beta snack", "title": "B", "price": 20.0, "quantity": 3, "status": "active", "category": "fruit"},
-        {"name": "Gamma root", "title": "C", "price": 5.0, "quantity": 10, "status": "pending", "category": "vegetable"},
-        {"name": "Delta root", "title": "D", "price": 15.0, "quantity": 2, "status": "pending", "category": "vegetable"},
-        {"name": "Omega snack", "title": "E", "price": 50.0, "quantity": 1, "status": "archived", "category": "fruit"},
+        {
+            "name": "Alpha snack",
+            "title": "A",
+            "price": 10.0,
+            "quantity": 5,
+            "status": "active",
+            "category": "fruit",
+        },
+        {
+            "name": "Beta snack",
+            "title": "B",
+            "price": 20.0,
+            "quantity": 3,
+            "status": "active",
+            "category": "fruit",
+        },
+        {
+            "name": "Gamma root",
+            "title": "C",
+            "price": 5.0,
+            "quantity": 10,
+            "status": "pending",
+            "category": "vegetable",
+        },
+        {
+            "name": "Delta root",
+            "title": "D",
+            "price": 15.0,
+            "quantity": 2,
+            "status": "pending",
+            "category": "vegetable",
+        },
+        {
+            "name": "Omega snack",
+            "title": "E",
+            "price": 50.0,
+            "quantity": 1,
+            "status": "archived",
+            "category": "fruit",
+        },
     ]
+    created_records = []
     for record in records:
         r = await client.post(BASE_URL, json=record, headers=headers)
         assert r.status_code == 201, f"Failed to seed record: {r.text}"
+        created_records.append(r.json())
 
-    yield
+    yield created_records
 
     # Cleanup
     await client.delete(f"/api/v1/collections/{COLLECTION}", headers=headers)
@@ -209,6 +246,35 @@ async def test_filter_name_field_collision_pre_aggregation(client: AsyncClient, 
     data = resp.json()
     assert data["results"][0]["count"] == 3
     assert data["results"][0]["sum_price"] == pytest.approx(80.0)
+
+
+@pytest.mark.asyncio
+async def test_filter_system_field_collisions_pre_aggregation(
+    client: AsyncClient,
+    superadmin_token,
+    setup_collection,
+):
+    headers = {"Authorization": f"Bearer {superadmin_token}"}
+    first_id = setup_collection[0]["id"]
+
+    cases = [
+        (f'id = "{first_id}"', 1, pytest.approx(10.0)),
+        ("created_at IS NOT NULL", 5, pytest.approx(100.0)),
+        ("updated_at IS NOT NULL", 5, pytest.approx(100.0)),
+        ('created_at >= "2000-01-01T00:00:00+00:00"', 5, pytest.approx(100.0)),
+        ('name ~ "%snack%" && created_at IS NOT NULL', 3, pytest.approx(80.0)),
+    ]
+
+    for filter_expr, expected_count, expected_sum in cases:
+        resp = await client.get(
+            AGG_URL,
+            params={"functions": "count(),sum(price)", "filter": filter_expr},
+            headers=headers,
+        )
+        assert resp.status_code == 200, f"{filter_expr} failed: {resp.text}"
+        data = resp.json()
+        assert data["results"][0]["count"] == expected_count
+        assert data["results"][0]["sum_price"] == expected_sum
 
 
 @pytest.mark.asyncio

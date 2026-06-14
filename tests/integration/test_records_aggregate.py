@@ -14,9 +14,9 @@ Tests cover:
 import pytest
 from httpx import AsyncClient
 
-
 COLLECTION = "agg_test_col"
 SCHEMA = [
+    {"name": "name", "type": "text"},
     {"name": "title", "type": "text", "required": True},
     {"name": "price", "type": "number"},
     {"name": "quantity", "type": "number"},
@@ -56,11 +56,11 @@ async def setup_collection(client: AsyncClient, superadmin_token):
 
     # Seed records
     records = [
-        {"title": "A", "price": 10.0, "quantity": 5, "status": "active", "category": "fruit"},
-        {"title": "B", "price": 20.0, "quantity": 3, "status": "active", "category": "fruit"},
-        {"title": "C", "price": 5.0, "quantity": 10, "status": "pending", "category": "vegetable"},
-        {"title": "D", "price": 15.0, "quantity": 2, "status": "pending", "category": "vegetable"},
-        {"title": "E", "price": 50.0, "quantity": 1, "status": "archived", "category": "fruit"},
+        {"name": "Alpha snack", "title": "A", "price": 10.0, "quantity": 5, "status": "active", "category": "fruit"},
+        {"name": "Beta snack", "title": "B", "price": 20.0, "quantity": 3, "status": "active", "category": "fruit"},
+        {"name": "Gamma root", "title": "C", "price": 5.0, "quantity": 10, "status": "pending", "category": "vegetable"},
+        {"name": "Delta root", "title": "D", "price": 15.0, "quantity": 2, "status": "pending", "category": "vegetable"},
+        {"name": "Omega snack", "title": "E", "price": 50.0, "quantity": 1, "status": "archived", "category": "fruit"},
     ]
     for record in records:
         r = await client.post(BASE_URL, json=record, headers=headers)
@@ -195,6 +195,20 @@ async def test_filter_pre_aggregation(client: AsyncClient, superadmin_token):
     assert resp.status_code == 200
     data = resp.json()
     assert data["results"][0]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_filter_name_field_collision_pre_aggregation(client: AsyncClient, superadmin_token):
+    headers = {"Authorization": f"Bearer {superadmin_token}"}
+    resp = await client.get(
+        AGG_URL,
+        params={"functions": "count(),sum(price)", "filter": 'name ~ "%snack%"'},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["results"][0]["count"] == 3
+    assert data["results"][0]["sum_price"] == pytest.approx(80.0)
 
 
 @pytest.mark.asyncio

@@ -24,9 +24,6 @@ from snackbase.core.rules import (
     validate_filter_expression,
     validate_group_by,
 )
-from snackbase.infrastructure.persistence.repositories.record_repository import (
-    _build_computed_select_parts,
-)
 from snackbase.domain.services import FieldType, PIIMaskingService, RecordValidator
 from snackbase.infrastructure.api.dependencies import (
     ANONYMOUS_USER_ID,
@@ -60,6 +57,9 @@ from snackbase.infrastructure.persistence.database import get_db_session
 from snackbase.infrastructure.persistence.repositories import (
     CollectionRepository,
     RecordRepository,
+)
+from snackbase.infrastructure.persistence.repositories.record_repository import (
+    _build_computed_select_parts,
 )
 
 logger = get_logger(__name__)
@@ -659,7 +659,11 @@ async def list_records(
             _dialect = session.bind.dialect.name if session.bind and hasattr(session.bind, "dialect") else "sqlite"
             _computed_parts, _computed_params = _build_computed_select_parts(schema, _dialect)
             _computed_map = {name: sql for sql, name in _computed_parts}
-            filter_sql, filter_params = compile_filter_to_sql(filter_expr, computed_fields_map=_computed_map)
+            filter_sql, filter_params = compile_filter_to_sql(
+                filter_expr,
+                computed_fields_map=_computed_map,
+                table_alias="r",
+            )
             if filter_sql != "1=1":
                 user_filter = RuleFilter(sql=filter_sql, params=filter_params)
         except (RuleSyntaxError, FilterCompilationError) as exc:
@@ -880,7 +884,11 @@ async def aggregate_collection(
             _dialect = session.bind.dialect.name if session.bind and hasattr(session.bind, "dialect") else "sqlite"
             _computed_parts, _computed_params = _build_computed_select_parts(schema, _dialect)
             _computed_map = {name: sql for sql, name in _computed_parts}
-            filter_sql, filter_params = compile_filter_to_sql(filter_expr, computed_fields_map=_computed_map)
+            filter_sql, filter_params = compile_filter_to_sql(
+                filter_expr,
+                computed_fields_map=_computed_map,
+                table_alias="r",
+            )
             if filter_sql != "1=1":
                 user_filter = RuleFilter(sql=filter_sql, params=filter_params)
         except (RuleSyntaxError, FilterCompilationError) as exc:
@@ -1901,4 +1909,3 @@ async def delete_record(
                 "message": "Failed to delete record",
             },
         )
-

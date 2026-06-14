@@ -2,11 +2,11 @@
 
 import pytest
 
+from snackbase.core.rules.exceptions import RuleSyntaxError
 from snackbase.core.rules.filter_compiler import (
     FilterCompilationError,
     compile_filter_to_sql,
 )
-from snackbase.core.rules.exceptions import RuleSyntaxError
 
 
 class TestFilterCompilerBasicOperators:
@@ -89,6 +89,68 @@ class TestFilterCompilerInOperator:
     def test_in_many_values(self):
         sql, params = compile_filter_to_sql('tag IN ("a", "b", "c", "d", "e")')
         assert len(params) == 5
+
+
+class TestFilterCompilerTableAlias:
+    """Tests for optional table alias qualification."""
+
+    def test_alias_qualifies_like_field(self):
+        sql, params = compile_filter_to_sql('name ~ "%john%"', table_alias="r")
+        assert 'r."name" LIKE :fp_0' in sql
+        assert params["fp_0"] == "%john%"
+
+    def test_unaliased_output_is_preserved(self):
+        sql, params = compile_filter_to_sql('status = "active"')
+        assert sql == '"status" = :fp_0'
+        assert params["fp_0"] == "active"
+
+    def test_alias_qualifies_equality_field(self):
+        sql, params = compile_filter_to_sql('status = "active"', table_alias="r")
+        assert sql == 'r."status" = :fp_0'
+        assert params["fp_0"] == "active"
+
+    def test_alias_qualifies_in_field(self):
+        sql, params = compile_filter_to_sql('status IN ("active", "pending")', table_alias="r")
+        assert sql == 'r."status" IN (:fp_0, :fp_1)'
+        assert params == {"fp_0": "active", "fp_1": "pending"}
+
+    def test_alias_qualifies_is_null_field(self):
+        sql, params = compile_filter_to_sql("deleted_at IS NULL", table_alias="r")
+        assert sql == 'r."deleted_at" IS NULL'
+        assert not params
+
+    def test_alias_qualifies_logical_filter_fields(self):
+        sql, params = compile_filter_to_sql(
+            'status = "active" && name ~ "%john%"',
+            table_alias="r",
+        )
+        assert 'r."status" = :fp_0' in sql
+        assert 'r."name" LIKE :fp_1' in sql
+        assert "AND" in sql
+        assert params == {"fp_0": "active", "fp_1": "%john%"}
+
+    def test_alias_does_not_inline_malicious_values(self):
+        sql, params = compile_filter_to_sql(
+            "name = \"'; DROP TABLE users; --\"",
+            table_alias="r",
+        )
+        assert 'r."name" = :fp_0' in sql
+        assert "DROP TABLE" not in sql
+        assert params["fp_0"] == "'; DROP TABLE users; --"
+
+    def test_alias_preserves_computed_field_substitution(self):
+        sql, params = compile_filter_to_sql(
+            "total_price > 25",
+            computed_fields_map={"total_price": '("price" * "quantity")'},
+            table_alias="r",
+        )
+        assert sql == '(("price" * "quantity")) > :fp_0'
+        assert 'r."total_price"' not in sql
+        assert params["fp_0"] == 25
+
+    def test_invalid_table_alias_is_rejected(self):
+        with pytest.raises(FilterCompilationError):
+            compile_filter_to_sql('status = "active"', table_alias='r; DROP TABLE users; --')
 
 
 class TestFilterCompilerIsNull:

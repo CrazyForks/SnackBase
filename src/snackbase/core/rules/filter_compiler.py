@@ -30,10 +30,17 @@ class FilterCompiler:
             the WHERE clause works against the derived value.
     """
 
-    def __init__(self, computed_fields_map: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        computed_fields_map: dict[str, str] | None = None,
+        table_alias: str | None = None,
+    ) -> None:
         self.param_counter = 0
         self.params: dict[str, Any] = {}
         self.computed_fields_map = computed_fields_map or {}
+        self.table_alias = table_alias
+        if table_alias is not None and not table_alias.replace("_", "").isalnum():
+            raise FilterCompilationError(f"Invalid table alias: '{table_alias}'")
 
     def compile(self, node: Node) -> tuple[str, dict[str, Any]]:
         """Compile AST node to SQL WHERE clause.
@@ -104,7 +111,9 @@ class FilterCompiler:
         if var_name in self.computed_fields_map:
             return f"({self.computed_fields_map[var_name]})"
 
-        # Quote the column name to prevent SQL injection via field name
+        # Quote the column name to prevent SQL injection via field name.
+        if self.table_alias:
+            return f'{self.table_alias}."{var_name}"'
         return f'"{var_name}"'
 
     def _compile_binary_op(self, node: BinaryOp) -> str:
@@ -162,6 +171,7 @@ class FilterCompiler:
 def compile_filter_to_sql(
     expression: str,
     computed_fields_map: dict[str, str] | None = None,
+    table_alias: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Compile a user filter expression to SQL WHERE clause.
 
@@ -178,6 +188,8 @@ def compile_filter_to_sql(
         expression: Filter expression string.
         computed_fields_map: Optional mapping of computed field name → SQL expression.
             Enables filtering by computed fields (e.g., ``?filter=total_price > 100``).
+        table_alias: Optional SQL table alias used to qualify plain field references.
+            When set to "r", ``status`` compiles to ``r."status"``.
 
     Raises:
         FilterCompilationError: If expression contains context variables or invalid identifiers
@@ -206,5 +218,5 @@ def compile_filter_to_sql(
     parser = Parser(lexer)
     ast = parser.parse()
 
-    compiler = FilterCompiler(computed_fields_map=computed_fields_map)
+    compiler = FilterCompiler(computed_fields_map=computed_fields_map, table_alias=table_alias)
     return compiler.compile(ast)

@@ -14,9 +14,9 @@ Tests cover:
 import pytest
 from httpx import AsyncClient
 
-
 COLLECTION = "filter_test_col"
 SCHEMA = [
+    {"name": "name", "type": "text"},
     {"name": "title", "type": "text", "required": True},
     {"name": "price", "type": "number"},
     {"name": "status", "type": "text"},
@@ -52,11 +52,11 @@ async def setup_collection(client: AsyncClient, superadmin_token):
 
     # Seed test records
     records = [
-        {"title": "Apple", "price": 1.5, "status": "active", "is_featured": True, "category": "fruit"},
-        {"title": "Banana", "price": 0.5, "status": "active", "is_featured": False, "category": "fruit"},
-        {"title": "Carrot", "price": 0.8, "status": "pending", "is_featured": False, "category": "vegetable"},
-        {"title": "Durian", "price": 20.0, "status": "archived", "is_featured": True, "category": "fruit"},
-        {"title": "Eggplant", "price": 1.2, "status": "active", "is_featured": False, "category": "vegetable"},
+        {"name": "Alpha snack", "title": "Apple", "price": 1.5, "status": "active", "is_featured": True, "category": "fruit"},
+        {"name": "Beta snack", "title": "Banana", "price": 0.5, "status": "active", "is_featured": False, "category": "fruit"},
+        {"name": "Gamma root", "title": "Carrot", "price": 0.8, "status": "pending", "is_featured": False, "category": "vegetable"},
+        {"name": "Omega snack", "title": "Durian", "price": 20.0, "status": "archived", "is_featured": True, "category": "fruit"},
+        {"name": "Zeta vegetable", "title": "Eggplant", "price": 1.2, "status": "active", "is_featured": False, "category": "vegetable"},
     ]
     for record in records:
         r = await client.post(f"/api/v1/records/{COLLECTION}", json=record, headers=headers)
@@ -160,6 +160,104 @@ async def test_filter_like(client: AsyncClient, superadmin_token):
     )
     assert resp.status_code == 200
     assert resp.json()["total"] == 1  # Eggplant
+
+
+@pytest.mark.asyncio
+async def test_filter_name_field_collision_returns_filtered_items(client: AsyncClient, superadmin_token):
+    """Filtering on a collection field named 'name' is qualified to the records alias."""
+    headers = {"Authorization": f"Bearer {superadmin_token}"}
+    resp = await client.get(
+        f"/api/v1/records/{COLLECTION}",
+        params={"filter": 'name ~ "%snack%"'},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 3
+    assert {item["name"] for item in data["items"]} == {
+        "Alpha snack",
+        "Beta snack",
+        "Omega snack",
+    }
+
+
+@pytest.mark.asyncio
+async def test_filter_name_field_collision_with_sort_and_offset_pagination(
+    client: AsyncClient,
+    superadmin_token,
+):
+    headers = {"Authorization": f"Bearer {superadmin_token}"}
+    resp = await client.get(
+        f"/api/v1/records/{COLLECTION}",
+        params={
+            "filter": 'name ~ "%snack%"',
+            "sort": "+name",
+            "limit": 2,
+            "skip": 1,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total"] == 3
+    assert [item["name"] for item in data["items"]] == ["Beta snack", "Omega snack"]
+
+
+@pytest.mark.asyncio
+async def test_filter_name_field_collision_with_cursor_pagination(
+    client: AsyncClient,
+    superadmin_token,
+):
+    headers = {"Authorization": f"Bearer {superadmin_token}"}
+    first_page = await client.get(
+        f"/api/v1/records/{COLLECTION}",
+        params={
+            "filter": 'name ~ "%snack%"',
+            "sort": "+name",
+            "limit": 2,
+            "cursor": "",
+            "include_count": "true",
+        },
+        headers=headers,
+    )
+    assert first_page.status_code == 200
+    first_data = first_page.json()
+    assert first_data["total"] == 3
+    assert [item["name"] for item in first_data["items"]] == ["Alpha snack", "Beta snack"]
+    assert first_data["next_cursor"]
+    assert first_data["prev_cursor"]
+
+    second_page = await client.get(
+        f"/api/v1/records/{COLLECTION}",
+        params={
+            "filter": 'name ~ "%snack%"',
+            "sort": "+name",
+            "limit": 2,
+            "cursor": first_data["next_cursor"],
+            "include_count": "true",
+        },
+        headers=headers,
+    )
+    assert second_page.status_code == 200
+    second_data = second_page.json()
+    assert second_data["total"] == 3
+    assert [item["name"] for item in second_data["items"]] == ["Omega snack"]
+
+    previous_page = await client.get(
+        f"/api/v1/records/{COLLECTION}",
+        params={
+            "filter": 'name ~ "%snack%"',
+            "sort": "+name",
+            "limit": 2,
+            "cursor_before": second_data["prev_cursor"],
+            "include_count": "true",
+        },
+        headers=headers,
+    )
+    assert previous_page.status_code == 200
+    previous_data = previous_page.json()
+    assert previous_data["total"] == 3
+    assert [item["name"] for item in previous_data["items"]] == ["Alpha snack", "Beta snack"]
 
 
 @pytest.mark.asyncio

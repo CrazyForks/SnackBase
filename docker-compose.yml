@@ -9,7 +9,7 @@ services:
     environment:
       - PORT=${PORT:-8000}
       - SNACKBASE_ACCESS_TOKEN_EXPIRE_MINUTES=${SNACKBASE_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
-      - SNACKBASE_CORS_ORIGINS=${SNACKBASE_CORS_ORIGINS:-["https://demo.snackbase.dev"]}
+      - SNACKBASE_CORS_ORIGINS=${SNACKBASE_CORS_ORIGINS:-https://demo.snackbase.dev}
       - SNACKBASE_DATABASE_URL=${SNACKBASE_DATABASE_URL:-sqlite+aiosqlite:///./sb_data/snackbase.db}
       - SNACKBASE_DEBUG=${SNACKBASE_DEBUG:-false}
       - SNACKBASE_ENCRYPTION_KEY=${SNACKBASE_ENCRYPTION_KEY:-change-me-in-production-use-openssl-rand-hex-32}

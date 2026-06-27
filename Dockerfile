@@ -11,6 +11,11 @@ RUN npm ci
 
 # Copy source files and build
 COPY ui/ .
+
+# Inject demo flag at build time so Vite inlines it into the bundle.
+# VITE_* vars are read from process.env by Vite at build time only.
+ARG VITE_IS_DEMO=false
+ENV VITE_IS_DEMO=$VITE_IS_DEMO
 RUN npm run build
 
 # Stage 2: Python backend with embedded frontend

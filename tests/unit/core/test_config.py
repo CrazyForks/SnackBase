@@ -72,6 +72,28 @@ def test_cors_origins_parsing():
         assert settings.cors_origins == ["http://single.com"]
 
 
+def test_list_settings_accept_csv_via_env():
+    """Deployment tools (e.g. Dokploy) often forward CSV values via env.
+
+    Pydantic Settings natively JSON-decodes complex fields at the source level,
+    which crashes on non-JSON values. The lenient settings sources must accept
+    plain comma-separated strings for every list field.
+    """
+    get_settings.cache_clear()
+
+    with patch.dict(os.environ, {
+        "SNACKBASE_CORS_ORIGINS": "https://app.example.com, https://admin.example.com",
+        "SNACKBASE_CORS_ALLOW_METHODS": "GET,POST",
+        "SNACKBASE_CORS_ALLOW_HEADERS": "*,Authorization",
+        "SNACKBASE_ALLOWED_MIME_TYPES": "image/png,application/pdf",
+    }):
+        settings = Settings()
+        assert settings.cors_origins == ["https://app.example.com", "https://admin.example.com"]
+        assert settings.cors_allow_methods == ["GET", "POST"]
+        assert settings.cors_allow_headers == ["*", "Authorization"]
+        assert settings.allowed_mime_types == ["image/png", "application/pdf"]
+
+
 def test_secret_key_validation():
     """Test secret key validation logic."""
     # Default insecure key is allowed but logged (implied)

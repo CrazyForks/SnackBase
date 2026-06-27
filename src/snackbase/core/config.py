@@ -5,11 +5,50 @@ environment variables and .env files. Configuration is loaded at application
 startup and is immutable during runtime.
 """
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BeforeValidator, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import DotEnvSettingsSource, EnvSettingsSource
+
+
+def _decode_complex_value(value: Any) -> Any:
+    """Leniently decode an env-provided value for a complex field.
+
+    Accepts JSON arrays/objects (when a deployment tool forwards a stringified
+    structure) and plain comma-separated strings (the 12-factor convention).
+    Native Python collections are passed through unchanged.
+    """
+    if not isinstance(value, str):
+        return value
+    stripped = value.strip()
+    if stripped and stripped[0] in "[{":
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+    return [item.strip() for item in stripped.split(",") if item.strip()]
+
+
+class _LenientEnvSettingsSource(EnvSettingsSource):
+    """Env source that decodes complex fields from JSON *or* comma-separated values."""
+
+    def decode_complex_value(self, field_name: str, field: Any, value: Any) -> Any:
+        return _decode_complex_value(value)
+
+
+class _LenientDotEnvSettingsSource(DotEnvSettingsSource):
+    """Dotenv source that decodes complex fields from JSON *or* comma-separated values."""
+
+    def decode_complex_value(self, field_name: str, field: Any, value: Any) -> Any:
+        return _decode_complex_value(value)
+
+
+# A list[str] field that tolerates a CSV string or JSON array when set directly
+# (env/dotenv loading is handled by the lenient settings sources above).
+CommaSepList = Annotated[list[str], BeforeValidator(_decode_complex_value)]
 
 
 class Settings(BaseSettings):
@@ -26,6 +65,23 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: Any,
+        env_settings: Any,
+        dotenv_settings: Any,
+        file_secret_settings: Any,
+    ) -> tuple[Any, ...]:
+        """Load settings from lenient sources that accept JSON or CSV list values."""
+        return (
+            init_settings,
+            _LenientEnvSettingsSource(settings_cls),
+            _LenientDotEnvSettingsSource(settings_cls),
+            file_secret_settings,
+        )
 
     # Application Settings
     app_name: str = "SnackBase"
@@ -54,7 +110,7 @@ class Settings(BaseSettings):
     db_sqlite_cache_size: int = -64000  # 64MB
     db_sqlite_temp_store: str = "MEMORY"
     db_sqlite_mmap_size: int = 268435456  # 256MB
-    db_sqlite_busy_timeout: int = 5000     # 5 seconds
+    db_sqlite_busy_timeout: int = 5000  # 5 seconds
     db_sqlite_foreign_keys: bool = True
 
     # Security Settings
@@ -74,10 +130,12 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = 7
 
     # CORS Settings
-    cors_origins: list[str] = Field(default=["http://localhost:3000", "http://localhost:8000", "http://localhost:5173"])
+    cors_origins: CommaSepList = Field(
+        default=["http://localhost:3000", "http://localhost:8000", "http://localhost:5173"]
+    )
     cors_allow_credentials: bool = True
-    cors_allow_methods: list[str] = Field(default=["*"])
-    cors_allow_headers: list[str] = Field(default=["*"])
+    cors_allow_methods: CommaSepList = Field(default=["*"])
+    cors_allow_headers: CommaSepList = Field(default=["*"])
 
     # Logging Settings
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -87,7 +145,7 @@ class Settings(BaseSettings):
     # File Storage Settings
     storage_path: str = "./sb_data/files"
     max_file_size: int = 10 * 1024 * 1024  # 10MB in bytes
-    allowed_mime_types: list[str] = Field(
+    allowed_mime_types: CommaSepList = Field(
         default=[
             "image/jpeg",
             "image/png",
@@ -235,14 +293,6 @@ class Settings(BaseSettings):
         description="Custom endpoint execution timeout in seconds (SNACKBASE_ENDPOINT_EXECUTION_TIMEOUT_SECONDS)",
     )
 
-    @field_validator("cors_origins", mode="before")
-    @classmethod
-    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
-        """Parse CORS origins from comma-separated string or list."""
-        if isinstance(v, str):
-            return [origin.strip() for origin in v.split(",")]
-        return v
-
     @field_validator("secret_key")
     @classmethod
     def validate_secret_key(cls, v: str) -> str:
@@ -284,8 +334,7 @@ class Settings(BaseSettings):
         """Validate single-tenant mode configuration."""
         if self.single_tenant_mode and not self.single_tenant_account:
             raise ValueError(
-                "SNACKBASE_SINGLE_TENANT_ACCOUNT is required when "
-                "SNACKBASE_SINGLE_TENANT_MODE=true"
+                "SNACKBASE_SINGLE_TENANT_ACCOUNT is required when SNACKBASE_SINGLE_TENANT_MODE=true"
             )
         return self
 

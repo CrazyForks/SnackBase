@@ -8,8 +8,8 @@ services:
         # demo flag into the static bundle (build-time only, like SNACKBASE_IS_DEMO).
         - VITE_IS_DEMO=${SNACKBASE_IS_DEMO:-true}
     container_name: snackbase
-    ports:
-      - "${PORT:-8000}:${PORT:-8000}"
+    expose:
+      - "${PORT:-8000}"
     environment:
       - PORT=${PORT:-8000}
       - SNACKBASE_ACCESS_TOKEN_EXPIRE_MINUTES=${SNACKBASE_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
